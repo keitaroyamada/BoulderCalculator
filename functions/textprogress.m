@@ -9,9 +9,9 @@ function [] = textprogress(n,N,varargin)
         %header
         if n<=1
              if size(varargin,1)==0
-                fprintf(strcat('\r0|', repmat('#',1,nnum_curr)));
+                fprintf(strcat('0|', repmat('#',1,nnum_curr)));
             elseif (size(varargin,1)==1)
-                fprintf(strcat('\r[',varargin{1},']:0|', repmat('#',1,nnum_curr)));
+                fprintf(strcat('[',varargin{1},']:0|', repmat('#',1,nnum_curr)));
             end
             
             if n~=N
@@ -38,7 +38,7 @@ function [] = textprogress(n,N,varargin)
         
 
         if n==N
-            fprintf('|100 Done.\n');
+            fprintf('|100 \n');
         end
         
 

@@ -29,11 +29,12 @@ classdef volume_extractor < handle
             obj.save_dir = [];
 
             obj.opts = struct('save_mat', true,...%save mat
-                          'save_csv', true,...%save csv
-                          'save_kml', true,... %save object kml of shape, major axis, minor axis
-                          'save_each_image', false,...%save trimed object images
-                          'save_each_3dmodel',false ...%save trimed object model for matlab
-                          );
+                              'save_csv', true,...%save csv
+                              'save_kml', true,... %save object kml of shape, major axis, minor axis
+                              'save_each_image', false,...%save trimed object images
+                              'save_each_3dmodel',false,...%save trimed object model for matlab
+                              'save_image_grid',false ...%save analysied image data grid
+                             );
             obj.height_threshold = [0.3, 20];%DEM hight threshold for vol
         end
 
@@ -108,7 +109,6 @@ classdef volume_extractor < handle
             %initialize
             ob_stats = sortrows(ob_stats, 4, 'descend');%'as descend'
             ob_stats(find(isnan(ob_stats{:,5})),:) = [];%remove no shape lines
-            %ここに輪郭のポイント数のチェックを入れる
             ob_stats(find(ob_stats{:,4} <= th_area),:)=[];%area threshold
 
             merged_raw = [];
@@ -403,6 +403,7 @@ classdef volume_extractor < handle
                     ylabel('N-S (m)')
                     zlabel('Altitude (m)')
                     view(-45,50)
+                    set(gca, 'YDir', 'reverse')
         
                     saveas(f,fullfile(obj.save_dir,'object 3dmodels',strcat(obj.im_name, num2str(i,'_obj%03d'),'.fig')))
                     %exportgraphics(f,fullfile(save_dir,'object mesh',strcat(im_name, num2str(i,'_obj%03d'),'.png')))
@@ -528,6 +529,42 @@ classdef volume_extractor < handle
                 saveLineKML(fullfile(obj.save_dir,strcat(obj.im_name, 'MajorAxis.kml')), majorDataTable);
                 saveLineKML(fullfile(obj.save_dir,strcat(obj.im_name, 'MinorAxis.kml')), minorDataTable);
             end
+
+            if obj.opts.save_image_grid
+                    %get grid data
+                    grid_data = obj.json_indata.images.image_grid;
+
+                    %save analised image grid
+                    grid_name   = strings(height(grid_data),1);  
+                    grid_lat    = cell(height(grid_data),1);
+                    grid_lon    = cell(height(grid_data),1);
+                    grid_elv    = cell(height(grid_data),1);
+                    for n = 1:height(grid_data)
+                        y0 = grid_data(n,1) + 1;
+                        y1 = grid_data(n,2) + 1;
+                        x0 = grid_data(n,3) + 1;
+                        x1 = grid_data(n,4) + 1;
+
+                        %x = [x0, x1, x1, x0, x0]';
+                        %y = [y0, y0, y1, y1, y0]';
+                        xy = [x0, y0, x1, y0, x1, y1, x0, y1, x0, y0];
+
+                        %get object seg in plane 
+                        [plx, ply] = geopix2loc(xy, obj.im_info, 'plane');
+
+                        [lat, lon]   = projinv(obj.im_info.ProjectedCRS, plx{:}, ply{:});
+                        grid_lat{n,1} = [lat];
+                        grid_lon{n,1} = [lon];
+                        grid_elv{n,1} = [repmat(50,5,1)];
+                        grid_name{n,1}= num2str(n,'%03d');
+
+                    end
+
+                    gridDataTable = table(grid_name, grid_lat, grid_lon, grid_elv);
+                    gridDataTable.Properties.VariableNames = {'name','latitude','longitude','elevation'};
+                    saveLineKML(fullfile(obj.save_dir,strcat(obj.im_name, 'Grid.kml')), gridDataTable);
+            end
+
         end
     end
 end

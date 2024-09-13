@@ -25,7 +25,8 @@ exr.opts = struct('save_mat', true,...%save mat
                   'save_csv', true,...%save csv
                   'save_kml', true,... %save object kml of shape, major axis, minor axis
                   'save_each_image', false,...%save trimed object images
-                  'save_each_3dmodel',false ...%save trimed object model for matlab
+                  'save_each_3dmodel',false,...%save trimed object model for matlab
+                  'save_image_grid',true...
                   );
 
 %extract & export
