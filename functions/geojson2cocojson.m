@@ -1,4 +1,4 @@
-function [outjData] = geojson2cocojson(geoJson, ortho_info,varargin)
+function varargout = geojson2cocojson(geoJson, ortho_info, varargin)
     
     %load data
     if ischar(ortho_info)
@@ -14,22 +14,33 @@ function [outjData] = geojson2cocojson(geoJson, ortho_info,varargin)
     end
 
     if ischar(geoJson)
-        txt = fileread(fullfile(p,n));
+        txt = fileread(geoJson);
         jData = jsondecode(txt);
     else
         jData = geoJson;
     end
     
     %initiarize
+    outData = struct('licenses',[{struct('name','','id',0,'url','')}], ...
+                     'info',{struct('contributor','','date_created','','description','','url','','version','','year','')},...
+                     'categories',[], ...
+                     'images',[], ...
+                     'annotations',[]);
+    
     categoryTable = [];
     for i=1:size(jData.features,1)
-        categoryTable = [categoryTable; table(jData.features(i).properties.id, jData.features(i).properties.id, "none");]
+        if isempty(jData.features(i).properties.id)
+            id = 0;
+        else
+            id = jData.features(i).properties.id;
+        end
+        categoryTable = [categoryTable; table(id, id, "none")];
     end
     categoryTable = unique(categoryTable);     
     categoryTable.Properties.VariableNames = {'id','name','supercategory'};
     
     imageTable      = [];
-    imageTableNames      = {'id','width','height','file_name','license','flickr_url','coco_url','date_captured'};
+    imageTableNames      = {'id','width','height','file_name','license','flickr_url','coco_url','date_captured','window_size','window_step_rate','image_grid'};
 
     annotationTable = [];    
     annotationTableNames = {'id','image_id','category_id','segmentation','area','bbox','iscrowd','attributes'};
@@ -38,7 +49,7 @@ function [outjData] = geojson2cocojson(geoJson, ortho_info,varargin)
 
     image_height = im_info.RasterSize(1);
     image_width  = im_info.RasterSize(2);
-    image_name   = im_name;
+    image_name   = string(im_name);
     
     %main
     an_id = 1;
@@ -50,8 +61,8 @@ function [outjData] = geojson2cocojson(geoJson, ortho_info,varargin)
         xr = (x - im_info.XWorldLimits(1)) / (im_info.XWorldLimits(2) - im_info.XWorldLimits(1));
         yr = (y - im_info.YWorldLimits(1)) / (im_info.YWorldLimits(2) - im_info.YWorldLimits(1));
     
-        x_inim = image_width * xr;
-        y_inim = image_height * (1-yr);
+        x_inim = 1 + image_width * xr;
+        y_inim = 1 + image_height * (1-yr);
     
         %get images
         im_id = 1;
@@ -64,15 +75,18 @@ function [outjData] = geojson2cocojson(geoJson, ortho_info,varargin)
                             0,...
                             "",...
                             "",...
-                            "")];
+                            "",...
+                            [image_height, image_width],...
+                            [1,1],...
+                            [0 image_height 0 image_width])];
            
         %get category
-        curr_cat_id = jData.features(i).properties.id;
+        curr_cat_id = id;
         
         %get annotation
         segmentation = zeros(1, size(x,1)*2);
-        segmentation(1:2:end) = y_inim;
-        segmentation(2:2:end) = x_inim;
+        segmentation(1:2:end) = x_inim;
+        segmentation(2:2:end) = y_inim;
         seg_area =  round(polyarea(segmentation(1:2:end),segmentation(2:2:end)));
         if seg_area==0
             segmentation=[];
@@ -89,7 +103,7 @@ function [outjData] = geojson2cocojson(geoJson, ortho_info,varargin)
                            curr_cat_id ,...                     %category_id
                            {segmentation},...                   %segmentation
                            seg_area,...                         %area
-                           {round([x0, y0, x1-x0, y1-y0])},...  %bbox
+                           {round([x0; y0; x1-x0; y1-y0])},...  %bbox
                            0,...                                %iscrowd
                            struct('occluded',logical(0)))];     %attributes
         an_id = an_id + 1;
@@ -122,8 +136,13 @@ function [outjData] = geojson2cocojson(geoJson, ortho_info,varargin)
     outjData = strrep(outjData,'categories":{','categories":[{');%Caution
     outjData = strrep(outjData,'},"images"','}],"images"');%Caution
     
-    %write json
-    %fid = fopen(fullfile(p, '_annotations.coco.json'),'w');
-    %fprintf(fid, outjData);
-    %fclose(fid);
+    if nargout==1
+        varargout{1} = outData;
+    else
+        %write json
+        fid = fopen(fullfile(p, '_annotations.coco.json'),'w');
+        fprintf(fid, outjData);
+        fclose(fid);
+    end
+    
 end

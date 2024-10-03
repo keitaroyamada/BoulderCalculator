@@ -28,7 +28,8 @@ classdef volume_extractor < handle
             %initiarise
             obj.save_dir = [];
 
-            obj.opts = struct('save_mat', true,...%save mat
+            obj.opts = struct('output_order','large2small',...%[large2small, small2large,north2south,west2east]
+                              'save_mat', true,...%save mat
                               'save_csv', true,...%save csv
                               'save_kml', true,... %save object kml of shape, major axis, minor axis
                               'save_each_image', false,...%save trimed object images
@@ -81,7 +82,7 @@ classdef volume_extractor < handle
             %convert struct to table
             %get class
             json_temp = struct2table(obj.json_indata.annotations);
-            [~,idx_categories] = ismember(json_temp.category_id, obj.json_indata.categories.id);
+            [~,idx_categories] = ismember(json_temp.category_id, [obj.json_indata.categories.id]');
             ob_name = string({(obj.json_indata.categories(idx_categories,:).name)}');
             
             %get otherproperties
@@ -107,7 +108,7 @@ classdef volume_extractor < handle
             obj.im_size_info = [ones(height(it)), it.height, ones(height(it)), it.width];
         
             %initialize
-            ob_stats = sortrows(ob_stats, 4, 'descend');%'as descend'
+            ob_stats = sortrows(ob_stats, 'ob_area', 'descend');%'as descend'
             ob_stats(find(isnan(ob_stats{:,5})),:) = [];%remove no shape lines
             ob_stats(find(ob_stats{:,4} <= th_area),:)=[];%area threshold
 
@@ -157,6 +158,24 @@ classdef volume_extractor < handle
             end
             warning('on')
 
+            %sort
+            switch obj.opts.output_order
+                case 'large2small'
+                    merged_raw = merged_raw;
+                case'small2large'
+                    merged_raw = sortrows(merged_raw,'ob_area','ascend');
+                case'north2south'
+                    merged_raw = sortrows(merged_raw,'ob_ct_y','ascend');
+                case'south2north'
+                    merged_raw = sortrows(merged_raw,'ob_ct_y','descend');
+                case'west2east'
+                    merged_raw = sortrows(merged_raw,'ob_ct_x','ascend');
+                case'east2west'
+                    merged_raw = sortrows(merged_raw,'ob_ct_x','descend');
+                otherwise
+                    merged_raw = merged_raw;
+            end
+
             obj.merged_raw = merged_raw;
             disp('Objects merged.')
         end
@@ -186,6 +205,7 @@ classdef volume_extractor < handle
             merged_world    = [];
             for i=1:height(obj.merged_raw)
                 textprogress(i, height(obj.merged_raw))
+                description = "";
 
                 %make trimed ORTHO
                 %get obj location&expantion
@@ -301,12 +321,15 @@ classdef volume_extractor < handle
                     mask_basement = insertShape(mask_basement, 'FilledPolygon', mask_seg, 'Color','black','Opacity',1);
                 end
                 mask_basement(mask_basement~=1)=nan;
-        
+
                 %calc height of basement
                 fit_type='poly33';
                 basement = dem_trim_rd.*mask_basement(:,:,1);
                 [X,Y]    = meshgrid([1:size(basement,2)],[1:size(basement,1)]);
                 idx      = find(not(isnan(basement)));
+                if length(idx)<10
+                    continue
+                end
                 [B, gof] = fit([reshape(X(idx),[],1),reshape(Y(idx),[],1)],reshape(double(basement(idx)),[],1),fit_type);
                 fit_rmse = gof.rmse;
         
@@ -332,6 +355,7 @@ classdef volume_extractor < handle
                 maxh_obj   = double(max(max(height_obj2)));
                 if fit_rmse>1
                     base_height_obj = nan;
+                    description = [description, "Height is set as Nan because it exceeds the fitting rmse."];
                 else
                     base_height_obj = median(median(base_obj,'omitnan'),'omitnan');
                 end
@@ -347,6 +371,7 @@ classdef volume_extractor < handle
                     end
                 else
                     dsm_vol_m3 = nan;
+                    description = [description, "Vdsm is set as Nan because it exceeds the height thresholds."];
                 end
         
                 %------------------------------------------------------------------
@@ -444,7 +469,7 @@ classdef volume_extractor < handle
                                                     MajorAxis, MinorAxis, maxh_obj, meanh_obj, Orientation,...%10:14
                                                     ob_area_m2, major_cross_area, minor_cross_area,...%15:17
                                                     abc_vol_m3, eli_vol_m3, dsm_vol_m3,...%18:20
-                                                    fit_rmse, ob_seg_plx, ob_seg_ply, crs)];%21:24
+                                                    fit_rmse, ob_seg_plx, ob_seg_ply, crs, {description})];%21:25
             end
             %==============================================================
             %save result
@@ -455,12 +480,12 @@ classdef volume_extractor < handle
             
             if  obj.opts.save_mat == true
                 %save mat file
-                save(fullfile(obj.save_dir, 'detectron2_results.mat'),'merged_world', 'merge_raw', 'im_info', 'dem_info')
+                save(fullfile(obj.save_dir, 'detectron2_results.mat'),'merged_world', 'merge_raw', 'im_info', 'dem_info');
             end
 
             if obj.opts.save_csv == true
                 %save csv
-                n = [1:4, 5:6,9, 21,7:8, 10:12,14, 15:17, 18:20, 21];
+                n = [1:4, 5:6,9, 21,7:8, 10:12,14, 15:17, 18:20, 21, 25];
                 out_data = merged_world(:,n);
 
                 writetable(out_data, fullfile(obj.save_dir,strcat(obj.im_name, '_results.csv')))
