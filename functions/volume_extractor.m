@@ -82,6 +82,7 @@ classdef volume_extractor < handle
             %convert struct to table
             %get class
             json_temp = struct2table(obj.json_indata.annotations);
+            
             [~,idx_categories] = ismember(json_temp.category_id, [obj.json_indata.categories.id]');
             ob_name = string({(obj.json_indata.categories(idx_categories,:).name)}');
             

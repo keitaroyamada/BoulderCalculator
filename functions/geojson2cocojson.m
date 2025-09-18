@@ -37,7 +37,6 @@ function varargout = geojson2cocojson(geoJson, ortho_info, varargin)
         categoryTable = [categoryTable; table(id, id, "none")];
     end
     categoryTable = unique(categoryTable);     
-    categoryTable.Properties.VariableNames = {'id','name','supercategory'};
     
     imageTable      = [];
     imageTableNames      = {'id','width','height','file_name','license','flickr_url','coco_url','date_captured','window_size','window_step_rate','image_grid'};
@@ -116,12 +115,7 @@ function varargout = geojson2cocojson(geoJson, ortho_info, varargin)
     
     outData.images      = table2struct(imageTable);
     outData.annotations = table2struct(annotationTable);
-    if height(categoryTable)==1
-        outData.categories = {table2struct(categoryTable)};
-    else
-        outData.categories = table2struct(categoryTable);
-    end
-    
+    outData.categories = table2struct(categoryTable);
     outjData = jsonencode(outData);
     
     %add[] around segmentation points
