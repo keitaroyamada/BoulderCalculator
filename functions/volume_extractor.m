@@ -29,6 +29,7 @@ classdef volume_extractor < handle
             obj.save_dir = [];
 
             obj.opts = struct('output_order','large2small',...%[large2small, small2large,north2south,west2east]
+                              'output_id','position',...%[serial, position]
                               'save_mat', true,...%save mat
                               'save_csv', true,...%save csv
                               'save_kml', true,... %save object kml of shape, major axis, minor axis
@@ -371,8 +372,12 @@ classdef volume_extractor < handle
                         isboulder = 1;
                     end
                 else
-                    dsm_vol_m3 = nan;
-                    description = [description, "Vdsm is set as Nan because it exceeds the height thresholds."];
+                    if obj.opts.exclude_nan_volume
+                        continue
+                    else
+                        dsm_vol_m3 = nan;
+                        description = [description, "Vdsm is set as Nan because it exceeds the height thresholds."];
+                    end                    
                 end
         
                 %------------------------------------------------------------------
@@ -454,7 +459,17 @@ classdef volume_extractor < handle
                 
                 %make data for summary properties
                 ob_area_m2  = obj.merged_raw.ob_area(i) * im_scale(1)*im_scale(2);
-                ob_id       = string(num2str(i,'ob_%03d'));
+                switch obj.opts.output_id
+                    case 'serial'
+                        ob_id       = string(num2str(i,'ob_%03d'));
+                    case 'position'
+                        id_quantize_m = 0.1; % [m] quantize size
+
+                        ob_ct_plx_id = round(ob_ct_plx{:} / id_quantize_m);
+                        ob_ct_ply_id = round(ob_ct_ply{:} / id_quantize_m);
+
+                        ob_id = string(sprintf('%s_x%d_y%d', ob_name, ob_ct_plx_id, ob_ct_ply_id));
+                end
                 ob_name     = string(obj.merged_raw.ob_name{i});
                 crs         = obj.im_info.ProjectedCRS.Name;
                 abc_vol_m3  = MajorAxis.*MinorAxis.*maxh_obj;

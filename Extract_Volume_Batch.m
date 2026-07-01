@@ -34,14 +34,15 @@ for json_n =1:size(json_list,1)
     
     %set export settings
     exr.save_dir = fullfile(json_dir,'outputs',im_name);
-    exr.opts = struct('output_order','large2small',...%[large2small, small2large,north2south,west2east]...
-                      'save_mat', true,...%save mat
-                      'save_csv', true,...%save csv
-                      'save_kml', true,... %save object kml of shape, major axis, minor axis
-                      'save_each_image', true,...%save trimed object images
-                      'save_each_3dmodel',false, ...%save trimed object model for matlab
-                      'save_image_grid',false);%save analysied image data grid
-    
+    exr.opts.output_order      = 'large2small';%[large2small, small2large,north2south,west2east]...
+    exr.opts.output_id         = 'position';
+    exr.opts.save_mat          = true; %save mat
+    exr.opts.save_csv          = true; %save csv
+    exr.opts.save_kml          = true; %save object kml of shape, major axis, minor axis
+    exr.opts.save_each_image   = false; %save trimmed object images
+    exr.opts.save_each_3dmodel = false; %save trimmed object model for matlab
+    exr.opts.save_image_grid   = true; %save analysied image data grid
+
     %extract & export
     exr.extractVolume()
 end

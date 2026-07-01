@@ -30,17 +30,17 @@ overlap_area_threshold = 0.15;
 overlap_num_threshold = 1;
 area_threshold = 0;
 exr.opts.output_order = 'north2south';
+exr.opts.output_id = 'position';
 exr.mergeObjects(overlap_area_threshold, overlap_num_threshold, area_threshold);
 
 %set export settings
 exr.save_dir = fullfile(geojson_p, '_outputs');
-exr.opts = struct('save_mat', true,...%save mat
-                  'save_csv', true,...%save csv
-                  'save_kml', true,... %save object kml of shape, major axis, minor axis
-                  'save_each_image', false,...%save trimed object images
-                  'save_each_3dmodel',false,...%save trimed object model for matlab
-                  'save_image_grid',true...
-                  );
+exr.opts.save_mat = true; %save mat
+exr.opts.save_csv = true; %save csv
+exr.opts.save_kml = true; %save object kml of shape, major axis, minor axis
+exr.opts.save_each_image = false; %save trimmed object images
+exr.opts.save_each_3dmodel = false; %save trimmed object model for matlab
+exr.opts.save_image_grid = true; %save analysied image data grid
 
 %extract & export
 exr.extractVolume();
