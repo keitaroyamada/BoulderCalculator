@@ -41,7 +41,7 @@ for json_n =1:size(json_list,1)
     exr.opts.save_kml          = true; %save object kml of shape, major axis, minor axis
     exr.opts.save_each_image   = false; %save trimmed object images
     exr.opts.save_each_3dmodel = false; %save trimmed object model for matlab
-    exr.opts.save_image_grid   = true; %save analysied image data grid
+    exr.opts.save_image_grid   = false; %save analysied image data grid
 
     %extract & export
     exr.extractVolume()

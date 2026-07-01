@@ -30,11 +30,13 @@ classdef volume_extractor < handle
 
             obj.opts = struct('output_order','large2small',...%[large2small, small2large,north2south,west2east]
                               'output_id','position',...%[serial, position]
+                              'exclude_nan_volume',false,...% exclude object with no volume
+                              'exclude_boundary_object', true,... %exclude objects touching image boundary
                               'save_mat', true,...%save mat
                               'save_csv', true,...%save csv
                               'save_kml', true,... %save object kml of shape, major axis, minor axis
-                              'save_each_image', false,...%save trimed object images
-                              'save_each_3dmodel',false,...%save trimed object model for matlab
+                              'save_each_image', false,...%save trimmed object images
+                              'save_each_3dmodel',false,...%save trimmed object model for matlab
                               'save_image_grid',false ...%save analysied image data grid
                              );
             obj.height_threshold = [0.3, 20];%DEM hight threshold for vol
@@ -98,6 +100,18 @@ classdef volume_extractor < handle
             ob_area = zeros(size(ob_seg));
             for i= 1:size(ob_seg,1)
                 seg = ob_seg{i,1};
+                if iscell(seg)
+                    if isempty(seg{1})
+                        ob = polyshape();
+                        ob_pgn{i,1} = ob;
+                        ob_ct_x(i,1) = NaN;
+                        ob_ct_y(i,1) = NaN;
+                        ob_area(i,1) = 0;
+                        continue
+                    else
+                        seg = seg{1};
+                    end
+                end
                 ob = polyshape(seg(1:2:end), seg(2:2:end));
                 ob = rmholes(ob);
                 ob_pgn{i,1} = ob;
@@ -108,6 +122,44 @@ classdef volume_extractor < handle
             ob_stats = [table(ob_name, ob_bdbox, ob_seg, ob_area, ob_ct_x, ob_ct_y), cell2table(ob_pgn)];
             it = struct2table(obj.json_indata.images,'AsArray',1);
             obj.im_size_info = [ones(height(it)), it.height, ones(height(it)), it.width];
+
+            %remove objects touching split-window boundary
+            if obj.opts.exclude_boundary_object
+                split_window_ranges = obj.json_indata.images.image_grid;
+                boundary_tol = 0;
+            
+                idx_touch_boundary = false(height(ob_stats),1);
+            
+                for k = 1:height(ob_stats)
+                    bbox = ob_stats.ob_bdbox(k,:);
+            
+                    bbox_x0 = bbox(1);
+                    bbox_y0 = bbox(2);
+                    bbox_x1 = bbox(1) + bbox(3) - 1;
+                    bbox_y1 = bbox(2) + bbox(4) - 1;
+            
+                    idx_candidate_window = find( ...
+                        split_window_ranges(:,1) <= bbox_y0 & bbox_y1 <= split_window_ranges(:,2) & ...
+                        split_window_ranges(:,3) <= bbox_x0 & bbox_x1 <= split_window_ranges(:,4));
+            
+                    for w = idx_candidate_window'
+                        win_y0 = split_window_ranges(w,1);
+                        win_y1 = split_window_ranges(w,2);
+                        win_x0 = split_window_ranges(w,3);
+                        win_x1 = split_window_ranges(w,4);
+            
+                        if bbox_x0 <= win_x0 + boundary_tol || ...
+                           bbox_x1 >= win_x1 - boundary_tol || ...
+                           bbox_y0 <= win_y0 + boundary_tol || ...
+                           bbox_y1 >= win_y1 - boundary_tol
+                            idx_touch_boundary(k) = true;
+                            break
+                        end
+                    end
+                end
+            
+                ob_stats(idx_touch_boundary,:) = [];
+            end          
         
             %initialize
             ob_stats = sortrows(ob_stats, 'ob_area', 'descend');%'as descend'
@@ -209,7 +261,7 @@ classdef volume_extractor < handle
                 textprogress(i, height(obj.merged_raw))
                 description = "";
 
-                %make trimed ORTHO
+                %make trimmed ORTHO
                 %get obj location&expantion
                 ex = 5; % expanding size
                 seg  = obj.merged_raw.ob_seg{i};
@@ -468,8 +520,9 @@ classdef volume_extractor < handle
                         ob_ct_plx_id = round(ob_ct_plx{:} / id_quantize_m);
                         ob_ct_ply_id = round(ob_ct_ply{:} / id_quantize_m);
 
-                        ob_id = string(sprintf('%s_x%d_y%d', ob_name, ob_ct_plx_id, ob_ct_ply_id));
+                        ob_id = string(sprintf('id_x%d_y%d',ob_ct_plx_id, ob_ct_ply_id));
                 end
+
                 ob_name     = string(obj.merged_raw.ob_name{i});
                 crs         = obj.im_info.ProjectedCRS.Name;
                 abc_vol_m3  = MajorAxis.*MinorAxis.*maxh_obj;
@@ -580,7 +633,7 @@ classdef volume_extractor < handle
                     grid_lat    = cell(height(grid_data),1);
                     grid_lon    = cell(height(grid_data),1);
                     grid_elv    = cell(height(grid_data),1);
-                    for n = 1:height(grid_data)
+                    for n = 1:size(grid_data,1)
                         y0 = grid_data(n,1) + 1;
                         y1 = grid_data(n,2) + 1;
                         x0 = grid_data(n,3) + 1;
