@@ -81,25 +81,37 @@ classdef volume_extractor < handle
         end
 
         function [] = mergeObjects(obj, th_orverlap, th_duplication, th_area)
+            % method = 'merge' keeps the existing polygon-union merge behavior.
+            % method = 'nms' keeps the highest-score object and suppresses overlaps.
+            
+            method = 'merge'; % 'merge' or 'nms'
+            
             warning('off','all')
-            %convert struct to table
-            %get class
-            json_temp = struct2table(obj.json_indata.annotations);
+            
+            % Convert JSON annotations to table.
+            if size(obj.json_indata.annotations,1)==1
+                json_temp = struct2table(obj.json_indata.annotations, AsArray=true);
+            else
+                json_temp = struct2table(obj.json_indata.annotations);
+            end
             
             [~,idx_categories] = ismember(json_temp.category_id, [obj.json_indata.categories.id]');
-            ob_name = string({(obj.json_indata.categories(idx_categories,:).name)}');
+            ob_name = string({obj.json_indata.categories(idx_categories,:).name}');
             
-            %get otherproperties
+            % Get object properties.
             ob_bdbox = ([obj.json_indata.annotations.bbox]');
             ob_seg = ({obj.json_indata.annotations.segmentation}');
+            ob_score = str2double(string({obj.json_indata.annotations.score})');
             
-            %get segdata
+            % Convert segmentation to polyshape.
             ob_pgn = cell(size(ob_seg));
             ob_ct_x = zeros(size(ob_seg));
             ob_ct_y = zeros(size(ob_seg));
             ob_area = zeros(size(ob_seg));
-            for i= 1:size(ob_seg,1)
+            
+            for i = 1:size(ob_seg,1)
                 seg = ob_seg{i,1};
+            
                 if iscell(seg)
                     if isempty(seg{1})
                         ob = polyshape();
@@ -112,22 +124,25 @@ classdef volume_extractor < handle
                         seg = seg{1};
                     end
                 end
+            
                 ob = polyshape(seg(1:2:end), seg(2:2:end));
                 ob = rmholes(ob);
                 ob_pgn{i,1} = ob;
                 [ob_ct_x(i,1), ob_ct_y(i,1)] = centroid(ob);
                 ob_area(i,1) = area(ob);
             end
-
-            ob_stats = [table(ob_name, ob_bdbox, ob_seg, ob_area, ob_ct_x, ob_ct_y), cell2table(ob_pgn)];
+            
+            ob_stats = [ ...
+                table(ob_name, ob_bdbox, ob_seg, ob_area, ob_ct_x, ob_ct_y, ob_score), ...
+                cell2table(ob_pgn)];
+            
             it = struct2table(obj.json_indata.images,'AsArray',1);
             obj.im_size_info = [ones(height(it)), it.height, ones(height(it)), it.width];
-
-            %remove objects touching split-window boundary
+            
+            % Remove objects touching the split-window boundary.
             if obj.opts.exclude_boundary_object
                 split_window_ranges = obj.json_indata.images.image_grid;
                 boundary_tol = 0;
-            
                 idx_touch_boundary = false(height(ob_stats),1);
             
                 for k = 1:height(ob_stats)
@@ -152,6 +167,7 @@ classdef volume_extractor < handle
                            bbox_x1 >= win_x1 - boundary_tol || ...
                            bbox_y0 <= win_y0 + boundary_tol || ...
                            bbox_y1 >= win_y1 - boundary_tol
+            
                             idx_touch_boundary(k) = true;
                             break
                         end
@@ -159,80 +175,136 @@ classdef volume_extractor < handle
                 end
             
                 ob_stats(idx_touch_boundary,:) = [];
-            end          
-        
-            %initialize
-            ob_stats = sortrows(ob_stats, 'ob_area', 'descend');%'as descend'
-            ob_stats(find(isnan(ob_stats{:,5})),:) = [];%remove no shape lines
-            ob_stats(find(ob_stats{:,4} <= th_area),:)=[];%area threshold
-
-            merged_raw = [];
+            end
+            
+            % Common filtering.
+            ob_stats(find(isnan(ob_stats{:,5})),:) = [];
+            ob_stats(find(ob_stats{:,4} <= th_area),:) = [];
+            
+            % Sort candidates for the selected method.
+            switch method
+                case 'merge'
+                    ob_stats = sortrows(ob_stats, 'ob_area', 'descend');
+                case 'nms'
+                    ob_stats = sortrows(ob_stats, 'ob_score', 'descend');
+                otherwise
+                    error('method must be ''merge'' or ''nms''.')
+            end
             
             N = height(ob_stats);
-            wc = 0;
+            merged_raw = [];
+            
             while height(ob_stats)>0
-                wc = wc+1;
                 i = 1;
-                
-                nr_idx = knnsearch(ob_stats{:,5:6},ob_stats{i,5:6},'K',30);%search centroid
-                C   = intersect(ob_stats{i,7}, ob_stats{nr_idx,7});
-        
-                baseAreaRate1 = area(C)./area(ob_stats{i,7});
-                baseAreaRate2 = area(C)./area(ob_stats{nr_idx,7});
-                
-                idx_base = find(any([baseAreaRate1>th_orverlap, baseAreaRate2>th_orverlap],2));%check iou
-        
-                idx = idx_base;
-        
-                if numel(idx)>=th_duplication
-                    %if objects overlap 
-                    U = union(ob_stats{nr_idx(idx),7});
-                    temp = ob_stats(nr_idx(idx(1)),:);
-                    temp.ob_bdbox        = [min(U.Vertices(:,1)),...
-                                             min(U.Vertices(:,2)),...
-                                             max(U.Vertices(:,1)) - min(U.Vertices(:,1)),...
+                K = min(30, height(ob_stats));
+            
+                nr_idx = knnsearch(ob_stats{:,5:6}, ob_stats{i,5:6}, 'K', K);
+                nr_idx = nr_idx(ob_stats.ob_name(nr_idx) == ob_stats.ob_name(i));
+            
+                switch method
+                    case 'merge'
+                        C = intersect(ob_stats{i,8}, ob_stats{nr_idx,8});
+                        baseAreaRate1 = area(C)./area(ob_stats{i,8});
+                        baseAreaRate2 = area(C)./area(ob_stats{nr_idx,8});
+            
+                        idx_base = find(any([baseAreaRate1>th_orverlap, baseAreaRate2>th_orverlap],2));
+                        idx = idx_base;
+            
+                        if numel(idx)>=th_duplication
+                            U = union(ob_stats{nr_idx(idx),8});
+                            temp = ob_stats(nr_idx(idx(1)),:);
+            
+                            temp.ob_bdbox = [min(U.Vertices(:,1)), ...
+                                             min(U.Vertices(:,2)), ...
+                                             max(U.Vertices(:,1)) - min(U.Vertices(:,1)), ...
                                              max(U.Vertices(:,2)) - min(U.Vertices(:,2))];
-                    temp.ob_seg          = zeros(1,numel(U.Vertices));
-                    temp.ob_seg(1:2:end) = U.Vertices(:,1);
-                    temp.ob_seg(2:2:end) = U.Vertices(:,2);
-                    temp.ob_seg          = {temp.ob_seg};
-                    temp.ob_area         = area(U);
-                    [temp.ob_ct_x, temp.ob_ct_y] = centroid(U);
-                    temp_pgn              = U;
-                    temp.duplicate        = numel(idx);
-                    
-                    %add into new list
-                    merged_raw = [merged_raw; temp];
-                    %delete old list
-                    ob_stats(nr_idx(idx),:) = [];
-                else
-                    %delete old list
-                    ob_stats(nr_idx(idx),:) = [];
+            
+                            temp.ob_seg = zeros(1,numel(U.Vertices));
+                            temp.ob_seg(1:2:end) = U.Vertices(:,1);
+                            temp.ob_seg(2:2:end) = U.Vertices(:,2);
+                            temp.ob_seg = {temp.ob_seg};
+                            temp.ob_area = area(U);
+                            [temp.ob_ct_x, temp.ob_ct_y] = centroid(U);
+                            temp.ob_score = max(ob_stats.ob_score(nr_idx(idx)));
+                            temp.ob_pgn = U;
+                            temp.duplicate = numel(idx);
+            
+                            merged_raw = [merged_raw; temp];
+                            ob_stats(nr_idx(idx),:) = [];
+                        else
+                            ob_stats(nr_idx(idx),:) = [];
+                        end
+            
+                    case 'nms'
+                        temp = ob_stats(i,:);
+                        idx = i;
+            
+                        for j = nr_idx(:)'
+                            if j == i
+                                continue
+                            end
+            
+                            area_i = sum(area(ob_stats{i,8}));
+                            area_j = sum(area(ob_stats{j,8}));
+                            inter_area = sum(area(intersect(ob_stats{i,8}, ob_stats{j,8})));
+                            union_area = area_i + area_j - inter_area;
+            
+                            if isempty(union_area) || ~isfinite(union_area) || union_area <= 0
+                                iou = 0;
+                            else
+                                iou = inter_area / union_area;
+                            end
+            
+                            if iou > th_orverlap
+                                idx = [idx; j];
+                            end
+                        end
+            
+                        if numel(idx)>=th_duplication
+                            temp.duplicate = numel(idx);
+                            merged_raw = [merged_raw; temp];
+                            ob_stats(idx,:) = [];
+                        else
+                            ob_stats(idx,:) = [];
+                        end
+            
+                    otherwise
+                        error('method must be ''merge'' or ''nms''.')
                 end
             end
+            
             warning('on')
-
-            %sort
+            
+            % Sort output.
             switch obj.opts.output_order
                 case 'large2small'
-                    merged_raw = merged_raw;
-                case'small2large'
+                    merged_raw = sortrows(merged_raw,'ob_area','descend');
+                case 'small2large'
                     merged_raw = sortrows(merged_raw,'ob_area','ascend');
-                case'north2south'
+                case 'north2south'
                     merged_raw = sortrows(merged_raw,'ob_ct_y','ascend');
-                case'south2north'
+                case 'south2north'
                     merged_raw = sortrows(merged_raw,'ob_ct_y','descend');
-                case'west2east'
+                case 'west2east'
                     merged_raw = sortrows(merged_raw,'ob_ct_x','ascend');
-                case'east2west'
+                case 'east2west'
                     merged_raw = sortrows(merged_raw,'ob_ct_x','descend');
                 otherwise
                     merged_raw = merged_raw;
             end
-
+            
             obj.merged_raw = merged_raw;
-            disp('Objects merged.')
+            
+            disp(strcat( ...
+                num2str(N), ...
+                ' detections processed into ', ...
+                num2str(height(merged_raw)), ...
+                ' objects by_ ', ...
+                method, ...
+                'method.'))
         end
+
+
 
         function [] = extractVolume(obj)
             
@@ -256,7 +328,26 @@ classdef volume_extractor < handle
             im_y0      = obj.im_info.YWorldLimits;
             im_scale   = [obj.im_info.CellExtentInWorldX, obj.im_info.CellExtentInWorldY];
             
-            merged_world    = [];
+            %
+            merged_world = [];
+            % table( ...
+            %     'Size',[0 26], ...
+            %     'VariableTypes',{ ...
+            %         'double','string','string','double', ...
+            %         'double','double','double','double','double', ...
+            %         'double','double','double','double','double', ...
+            %         'double','double','double', ...
+            %         'double','double','double', ...
+            %         'double','cell','cell','string','cell','double'}, ...
+            %     'VariableNames',{ ...
+            %         'calc_id','ob_id','ob_name','isboulder', ...
+            %         'ob_ct_lat','ob_ct_lon','ob_ct_plx','ob_ct_ply','base_height_obj', ...
+            %         'MajorAxis','MinorAxis','maxh_obj','meanh_obj','Orientation', ...
+            %         'ob_area_m2','major_cross_area','minor_cross_area', ...
+            %         'abc_vol_m3','eli_vol_m3','dsm_vol_m3', ...
+            %         'fit_rmse','ob_seg_plx','ob_seg_ply','crs','description','detection_count'} ...
+            %     );
+
             for i=1:height(obj.merged_raw)
                 textprogress(i, height(obj.merged_raw))
                 description = "";
@@ -523,7 +614,9 @@ classdef volume_extractor < handle
                         ob_id = string(sprintf('id_x%d_y%d',ob_ct_plx_id, ob_ct_ply_id));
                 end
 
+                detection_count = obj.merged_raw.duplicate(i);
                 ob_name     = string(obj.merged_raw.ob_name{i});
+                ob_score    = obj.merged_raw.ob_score(i);
                 crs         = obj.im_info.ProjectedCRS.Name;
                 abc_vol_m3  = MajorAxis.*MinorAxis.*maxh_obj;
                 eli_vol_m3  = 4/3*pi*abc_vol_m3/8;
@@ -538,7 +631,7 @@ classdef volume_extractor < handle
                                                     MajorAxis, MinorAxis, maxh_obj, meanh_obj, Orientation,...%10:14
                                                     ob_area_m2, major_cross_area, minor_cross_area,...%15:17
                                                     abc_vol_m3, eli_vol_m3, dsm_vol_m3,...%18:20
-                                                    fit_rmse, ob_seg_plx, ob_seg_ply, crs, {description})];%21:25
+                                                    fit_rmse, ob_seg_plx, ob_seg_ply, crs, {description}, detection_count, ob_score)];%21:27
             end
             %==============================================================
             %save result
@@ -554,7 +647,7 @@ classdef volume_extractor < handle
 
             if obj.opts.save_csv == true
                 %save csv
-                n = [1:4, 5:6,9, 21,7:8, 10:12,14, 15:17, 18:20, 21, 25];
+                n = [1:4, 26:27, 5:6,9, 21,7:8, 10:12,14, 15:17, 18:20, 21, 25];
                 out_data = merged_world(:,n);
 
                 writetable(out_data, fullfile(obj.save_dir,strcat(obj.im_name, '_results.csv')))
@@ -562,14 +655,17 @@ classdef volume_extractor < handle
 
             if obj.opts.save_kml==true
                 %save kml
-                save_kml_with_nandata = true;
+                save_kml_with_nandata = false;
                 if save_kml_with_nandata==false
                     idx = find(not(isnan(merged_world.dsm_vol_m3)));
                 else
                     idx = [1:height(merged_world)]';
                 end
         
-                ob_name  = strings(size(idx,1),1);   
+                ob_name   = strings(size(idx,1),1);
+                ob_score  = cell(size(idx,1),1);
+                detection_count = cell(size(idx,1),1);
+                ob_height = strings(size(idx,1),1);
                 seg_lat   = cell(size(idx,1),1);
                 seg_lon   = cell(size(idx,1),1);
                 seg_elv   = cell(size(idx,1),1);
@@ -588,6 +684,15 @@ classdef volume_extractor < handle
             
                     %get object name
                     ob_name{n,1} = merged_world.ob_id{i};
+
+                    %get object properties
+                    ob_score{n,1} = merged_world.ob_score(i);
+
+                    %get object detection numbers
+                    detection_count{n,1} = merged_world.detection_count(i);
+
+                    %get object height
+                    ob_height{n,1} = num2str(merged_world.maxh_obj(i));
             
                     %get shape
                     seg_lat{n,1} = [lat,lat(end)];
@@ -612,8 +717,8 @@ classdef volume_extractor < handle
                     minor_lon{n,1} = [win_lon(3:4)'];
                     minor_elv{n,1} = [0 0];
                 end
-                segDataTable = table(ob_name, seg_lat, seg_lon, seg_elv);
-                segDataTable.Properties.VariableNames = {'name','latitude','longitude','elevation'};
+                segDataTable = table(ob_name, ob_score, detection_count, ob_height, seg_lat, seg_lon, seg_elv);
+                segDataTable.Properties.VariableNames = {'name','score','detection_count', 'height', 'latitude','longitude','elevation'};
                 majorDataTable = table(ob_name, major_lat, major_lon, major_elv);
                 majorDataTable.Properties.VariableNames = {'name','latitude','longitude','elevation'};
                 minorDataTable = table(ob_name, minor_lat, minor_lon, minor_elv);
